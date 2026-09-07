@@ -15,3 +15,6 @@
 ```bash
 dotnet build
 dotnet run --project src/Cli
+## Додаткове завдання 1: Порівняння розмірів publish (Self-contained)
+* **win-x64:** 78 MB
+* **linux-x64:** 80 MB
