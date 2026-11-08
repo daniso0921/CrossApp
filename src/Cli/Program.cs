@@ -1,67 +1,77 @@
-﻿using Core;
-using Core.Abstractions;
-using Core.Services;
-using Core.Storage;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using Core;
+using Core.Reports;
 
-Console.OutputEncoding = System.Text.Encoding.UTF8;
+namespace Cli;
 
-// Визначаємо режим сховища за наявністю прапорця --file
-bool useFile = args.Contains("--file");
-string dataPath = Path.Combine(AppContext.BaseDirectory, "data", "catalog.json");
-
-// Composition Root: ручне впровадження залежності (DI)
-IBookStore store = useFile
-    ? new FileBookStore(dataPath)
-    : new InMemoryBookStore(SampleData.Books());
-
-var service = new LendingService(store);
-
-Console.WriteLine($"Сховище: {store.GetType().Name}");
-if (useFile)
+class Program
 {
-    Console.WriteLine($"Шлях до файлу даних: {dataPath}");
-}
-
-Console.WriteLine("\n--- Успішні операції ---");
-
-// Додавання нової книги через сервіс
-var newBook = service.AddBook("978-617-12-9999-9", "Спляче місто", 2024, "Сучасний Автор");
-Console.WriteLine($"Додано: [{newBook.Id}] \"{newBook.Title}\" ({newBook.Year} р.)");
-
-// Видача щойно створеного примірника
-service.IssueCopy(newBook.Id);
-Console.WriteLine($"Видано примірник з id={newBook.Id}");
-
-// Відображення списку книг
-Console.WriteLine("\nПоточний каталог книг:");
-foreach (var book in service.All())
-{
-    Console.WriteLine($"  [{book.Id,-11}] {book.Isbn,-20} \"{book.Title,-24}\" {book.Year,4} | {(book.IsIssued ? "ВИДАНО" : "В НАЯВНОСТІ")}");
-}
-
-Console.WriteLine("\n--- Сценарій обробки помилок ---");
-
-// 1. Спроба повторної видачі зайнятої книги
-TryExecute("Повторна видача зайнятого примірника", () =>
-{
-    service.IssueCopy(newBook.Id);
-});
-
-// 2. Спроба операції над неіснуючим ідентифікатором
-TryExecute("Видача книги з неіснуючим id", () =>
-{
-    service.IssueCopy("NON-EXISTENT-ID");
-});
-
-static void TryExecute(string actionDescription, Action action)
-{
-    try
+    static void Main(string[] args)
     {
-        action();
-        Console.WriteLine($"[ПРОРАХУНОК] {actionDescription}: операція мала завершитися помилкою!");
+        var sampleBooks = SampleData.GetBooks();
+        var command = args.FirstOrDefault(a => !a.StartsWith("--")) ?? "report-top";
+
+        switch (command)
+        {
+            case "report-top":
+                Console.WriteLine("ТОП-5 ВИДАНЬ ЗА КІЛЬКІСТЮ:");
+                PrintLines(ReportService.TopByQuantity(sampleBooks, b => b.Isbn, b => b.Title, b => b.Quantity, b => b.Genre, 5));
+                break;
+
+            case "report-low":
+                Console.WriteLine("ДЕФІЦИТНІ ВИДАННЯ (< 10):");
+                PrintLines(ReportService.LowStock(sampleBooks, b => b.Isbn, b => b.Title, b => b.Quantity, b => b.Genre, 10));
+                break;
+
+            case "report-groups":
+                Console.WriteLine("РОЗПОДІЛ ЗА ЖАНРАМИ:");
+                foreach (var g in ReportService.ByUnit(sampleBooks, b => b.Genre, b => b.Quantity))
+                {
+                    Console.WriteLine($"  {g.Key,-16} позицій: {g.Count,3}   сумарно: {g.TotalQuantity,6}");
+                }
+                break;
+
+            case "report-sum":
+                Console.WriteLine("ПІДСУМКОВІ ПОКАЗНИКИ:");
+                var t = ReportService.Totals(sampleBooks, b => b.Quantity);
+                Console.WriteLine($"  позицій {t.Items}, всього {t.Total}, середнє {t.Average:F2}, макс {t.Max}");
+                break;
+
+            case "report-demo":
+                RunDeferredExecutionDemo(sampleBooks);
+                break;
+
+            default:
+                Console.WriteLine("Доступні команди: report-top | report-low | report-groups | report-sum | report-demo");
+                break;
+        }
     }
-    catch (Exception ex)
+
+    private static void PrintLines(IReadOnlyList<StockLine> lines)
     {
-        Console.WriteLine($"[ПЕРЕХОПЛЕНО {ex.GetType().Name}] {actionDescription}: {ex.Message}");
+        foreach (var l in lines)
+        {
+            Console.WriteLine($"  {l.Sku,-10} {l.Title,-28} {l.Quantity,6} {l.Genre}");
+        }
+    }
+
+    private static void RunDeferredExecutionDemo(IEnumerable<Book> initialBooks)
+    {
+        Console.WriteLine("ДЕМО ВІДКЛАДЕНОГО ВИКОНАННЯ LINQ:");
+        var source = initialBooks.ToList();
+        var query = source.Where(b => b.Quantity < 10);
+
+        Console.WriteLine($"Дефіцитних до змін:    {query.Count()}");
+
+        source.Add(Book.Create("ISBN-999", "Тестова книга", "Програмування", 3));
+        
+        Console.WriteLine($"Дефіцитних після змін: {query.Count()}");
+
+        var snapshot = query.ToList();
+        source.Clear();
+        
+        Console.WriteLine($"У знімку лишилось:     {snapshot.Count}");
     }
 }
